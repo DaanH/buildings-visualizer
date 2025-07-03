@@ -1,7 +1,6 @@
 import { Form, useActionData, useNavigation } from "react-router";
 import * as React from "react";
 import { v4 as uuidv4 } from "uuid";
-import { processImageAndPrompt } from "./api/chatgpt";
 
 // Define ActionFunctionArgs type since it's not exported from @react-router/node
 type ActionFunctionArgs = {
@@ -87,25 +86,86 @@ export function meta() {
 }
 
 export default function ImageUpload() {
-	// Define the expected response type
+	// Define ActionData type for the return value of the action function
 	type ActionData =
 		| {
-				response?: {
-					image: string;
-					analysis: string;
-					imageId?: string;
+				response: {
+					imageId: string;
 				};
-				error?: string;
+				error?: undefined;
+		  }
+		| {
+				response?: undefined;
+				error: string;
 		  }
 		| undefined;
-	const actionData = useActionData() as ActionData;
-
-	// Get navigation state to track form submission status
+	const actionData = useActionData<typeof action>() as ActionData;
 	const navigation = useNavigation();
 	const isSubmitting = navigation.state === "submitting";
+	const [previewImage, setPreviewImage] = React.useState<string | null>(null);
+	const [selectedFile, setSelectedFile] = React.useState<File | null>(null);
+	const [processingStatus, setProcessingStatus] = React.useState<string | null>(
+		null
+	);
+	const [imageReady, setImageReady] = React.useState(false);
 
-	// State for image preview
-	const [previewUrl, setPreviewUrl] = React.useState<string | null>(null);
+	// Poll for image status updates
+	React.useEffect(() => {
+		let intervalId: number;
+		let isMounted = true;
+
+		const checkImageStatus = async () => {
+			if (!actionData?.response?.imageId) return;
+
+			try {
+				// Fetch the image status from the server
+				const response = await fetch(
+					`/api/image/${actionData.response.imageId}/status`
+				);
+				if (!response.ok) throw new Error("Failed to fetch image status");
+
+				const data = await response.json();
+
+				if (isMounted) {
+					setProcessingStatus(data.status);
+
+					// If processing is complete, stop polling
+					if (data.status === "completed") {
+						setImageReady(true);
+						clearInterval(intervalId);
+					}
+				}
+			} catch (error) {
+				console.error("Error checking image status:", error);
+			}
+		};
+
+		if (actionData?.response?.imageId) {
+			// Initial check
+			checkImageStatus();
+
+			// Set up polling every 2 seconds
+			intervalId = window.setInterval(checkImageStatus, 2000);
+		}
+
+		return () => {
+			isMounted = false;
+			if (intervalId) clearInterval(intervalId);
+		};
+	}, [actionData?.response?.imageId]);
+
+	// Handle file input change
+	const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+		const file = e.target.files?.[0];
+		if (file) {
+			// Create a preview URL
+			setPreviewImage(URL.createObjectURL(file));
+			setSelectedFile(file);
+		} else {
+			setPreviewImage(null);
+			setSelectedFile(null);
+		}
+	};
 
 	return (
 		<div className="container mx-auto p-8">
@@ -148,28 +208,20 @@ export default function ImageUpload() {
 						accept="image/*"
 						className="mt-1 block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100"
 						required
-						onChange={(e) => {
-							const file = e.target.files?.[0];
-							if (file) {
-								const url = URL.createObjectURL(file);
-								setPreviewUrl(url);
-							} else {
-								setPreviewUrl(null);
-							}
-						}}
+						onChange={handleFileChange}
 					/>
 
-					{previewUrl && (
+					{previewImage && (
 						<div className="mt-4">
 							<p className="text-sm text-gray-500 mb-2">Preview:</p>
 							<div className="relative w-32 h-32 overflow-hidden rounded-md border border-gray-300">
 								<img
-									src={previewUrl}
+									src={previewImage}
 									alt="Preview"
 									className="object-cover w-full h-full"
 									onLoad={() => {
 										// Free memory when the image is loaded
-										URL.revokeObjectURL(previewUrl);
+										URL.revokeObjectURL(previewImage);
 									}}
 								/>
 							</div>
@@ -241,32 +293,42 @@ export default function ImageUpload() {
 				<div className="mt-8 p-6 bg-gray-50 rounded-lg shadow">
 					<h2 className="text-xl font-semibold mb-4">Processed Image:</h2>
 					<div className="mt-4 flex flex-col md:flex-row gap-6">
-						{/* Display the returned image */}
+						{/* Display the returned image or loading indicator */}
 						<div className="w-full md:w-1/3">
 							<div className="border border-gray-300 rounded-md overflow-hidden">
-								<img
-									src={
-										actionData.response.imageId
-											? `/api/image/${actionData.response.imageId}`
-											: actionData.response.image
-									}
-									alt="Processed"
-									className="w-full h-auto"
-								/>
+								{processingStatus === "completed" ? (
+									<img
+										src={`/api/image/${actionData.response.imageId}`}
+										alt="Processed"
+										className="w-full h-auto"
+									/>
+								) : (
+									<div className="flex items-center justify-center h-64 bg-gray-100">
+										<div className="text-center p-4">
+											<div className="inline-block animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-blue-500 mb-2"></div>
+											<p className="text-gray-600">
+												{processingStatus === "pending"
+													? "Processing image..."
+													: "Waiting for status..."}
+											</p>
+										</div>
+									</div>
+								)}
 							</div>
-							{actionData.response.imageId && (
-								<p className="text-xs text-gray-500 mt-2">
-									Image ID: {actionData.response.imageId}
-								</p>
-							)}
 						</div>
 
-						{/* Display the analysis text */}
+						{/* Display the status information */}
 						<div className="w-full md:w-2/3">
-							<p className="text-sm text-gray-700 mb-2">Analysis:</p>
-							<pre className="whitespace-pre-wrap bg-gray-50 p-4 rounded-md border border-gray-200 text-gray-700 h-full">
-								{actionData.response.analysis}
-							</pre>
+							<div className="bg-white p-4 rounded-md border border-gray-300">
+								<h3 className="font-medium text-gray-900 mb-2">Status:</h3>
+								<p className="text-gray-700 whitespace-pre-line">
+									{processingStatus === "completed"
+										? "Image processing complete!"
+										: processingStatus === "pending"
+										? "Your image is being processed. This may take a few seconds..."
+										: "Waiting for status update..."}
+								</p>
+							</div>
 						</div>
 					</div>
 				</div>
