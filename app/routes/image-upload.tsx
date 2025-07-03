@@ -9,11 +9,10 @@ type ActionFunctionArgs = {
 };
 
 // Helper function to create JSON responses
-const json = (data: any, init?: ResponseInit) => {
+const json = (data: any, status: number = 200) => {
 	return new Response(JSON.stringify(data), {
-		...init,
+		status,
 		headers: {
-			...init?.headers,
 			"Content-Type": "application/json",
 		},
 	});
@@ -31,7 +30,7 @@ export async function action({ request }: ActionFunctionArgs) {
 	console.log("Form data received:", { prompt, fileName: file?.name });
 
 	if (!file) {
-		return json({ error: "Image is required" }, { status: 400 });
+		return json({ error: "Image is required" }, 400);
 	}
 
 	try {
@@ -47,10 +46,7 @@ export async function action({ request }: ActionFunctionArgs) {
 		return json({ response: { imageId } });
 	} catch (error) {
 		console.log(error);
-		return json(
-			{ error: "Failed to process image and prompt" },
-			{ status: 500 }
-		);
+		return json({ error: "Failed to process image and prompt" }, 500);
 	}
 }
 
