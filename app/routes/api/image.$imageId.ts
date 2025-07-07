@@ -21,6 +21,8 @@ export async function loader({ params }: LoaderFunctionArgs) {
 		// Get image from Redis
 		const imageData = await getImage(imageId);
 
+		console.log("Retrieved image data:", imageData);
+
 		if (!imageData) {
 			return new Response("Image not found", { status: 404 });
 		}

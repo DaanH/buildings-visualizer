@@ -1,6 +1,62 @@
 import { Form, useActionData, useNavigation } from "react-router";
 import * as React from "react";
 import { v4 as uuidv4 } from "uuid";
+import { wallPrompt } from "~/utils/prompts";
+
+/**
+ * Converts any image file to PNG format in-memory without saving to disk
+ * Uses Canvas API which is compatible with ESM
+ */
+async function convertToPng(file: File): Promise<File> {
+	// If already a PNG, return the file as is
+	if (file.type === "image/png") {
+		return file;
+	}
+
+	// Create a blob URL from the file
+	const blobUrl = URL.createObjectURL(file);
+
+	// Create an image element to load the file
+	const img = new Image();
+
+	// Wait for the image to load
+	await new Promise<void>((resolve, reject) => {
+		img.onload = () => resolve();
+		img.onerror = () => reject(new Error("Failed to load image"));
+		img.src = blobUrl;
+	});
+
+	// Create a canvas to draw the image
+	const canvas = document.createElement("canvas");
+	canvas.width = img.width;
+	canvas.height = img.height;
+
+	// Draw the image on the canvas
+	const ctx = canvas.getContext("2d");
+	if (!ctx) {
+		throw new Error("Failed to get canvas context");
+	}
+	ctx.drawImage(img, 0, 0);
+
+	// Clean up the blob URL
+	URL.revokeObjectURL(blobUrl);
+
+	// Convert the canvas to a PNG blob
+	const blob = await new Promise<Blob>((resolve) => {
+		canvas.toBlob((b) => {
+			if (!b) {
+				throw new Error("Failed to create blob");
+			}
+			resolve(b);
+		}, "image/png");
+	});
+
+	// Create a new File object with the PNG blob
+	return new File([blob], file.name.replace(/\.[^\.]+$/, ".png"), {
+		type: "image/png",
+		lastModified: file.lastModified,
+	});
+}
 
 // Define ActionFunctionArgs type since it's not exported from @react-router/node
 type ActionFunctionArgs = {
@@ -26,6 +82,17 @@ export async function action({ request }: ActionFunctionArgs) {
 	const formData = await request.formData();
 	const prompt = formData.get("prompt") as string;
 	const file = formData.get("image") as File;
+
+	// Validate file type - OpenAI requires PNG
+	const validTypes = ["image/png"];
+	if (!validTypes.includes(file.type)) {
+		return json(
+			{
+				error: `Unsupported image format: ${file.type}. Please use PNG format.`,
+			},
+			400
+		);
+	}
 
 	console.log("Form data received:", { prompt, fileName: file?.name });
 
@@ -58,10 +125,12 @@ const processAndStoreImage = async (
 	const { storeImage } = await import("../utils/redis.server");
 	const { processImageAndPrompt } = await import("./api/chatgpt");
 
-	const mockResponse = await processImageAndPrompt(prompt, file);
+	const response = await processImageAndPrompt(prompt, file);
+
+	if (!response) return;
 
 	// Extract the base64 data from the data URL
-	const base64Data = mockResponse.image.split(";base64,").pop() as string;
+	const base64Data = response.image.split(";base64,").pop() as string;
 
 	// Store the image in Redis with metadata
 	await storeImage(imageId, base64Data, {
@@ -151,12 +220,23 @@ export default function ImageUpload() {
 	}, [actionData?.response?.imageId]);
 
 	// Handle file input change
-	const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+	const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
 		const file = e.target.files?.[0];
 		if (file) {
-			// Create a preview URL
-			setPreviewImage(URL.createObjectURL(file));
-			setSelectedFile(file);
+			try {
+				// Convert to PNG immediately
+				const pngFile = await convertToPng(file);
+
+				// Create a preview URL from the PNG file
+				const previewUrl = URL.createObjectURL(pngFile);
+				setPreviewImage(previewUrl);
+				setSelectedFile(pngFile);
+			} catch (error) {
+				console.error("Error converting image to PNG:", error);
+				// Fallback to original file if conversion fails
+				setPreviewImage(URL.createObjectURL(file));
+				setSelectedFile(file);
+			}
 		} else {
 			setPreviewImage(null);
 			setSelectedFile(null);
@@ -165,9 +245,30 @@ export default function ImageUpload() {
 
 	return (
 		<div className="container mx-auto p-8">
-			<h1 className="text-3xl font-bold mb-8">Image Upload with ChatGPT</h1>
+			<h1 className="text-3xl font-bold mb-8">Paint Visualizer</h1>
 
-			<Form method="post" className="space-y-6" encType="multipart/form-data">
+			<Form
+				method="post"
+				className="space-y-6"
+				encType="multipart/form-data"
+				onSubmit={(e) => {
+					// Don't prevent default - let React Router handle the submission
+					// Just replace the file input value with our PNG file from state
+					if (selectedFile) {
+						// Find the file input element
+						const fileInput = e.currentTarget.querySelector(
+							"#image"
+						) as HTMLInputElement;
+
+						// Create a DataTransfer to set the files
+						const dataTransfer = new DataTransfer();
+						dataTransfer.items.add(selectedFile);
+
+						// Set the file input's files to our PNG file
+						fileInput.files = dataTransfer.files;
+					}
+				}}
+			>
 				{/* Show error message if there is one */}
 				{actionData?.error && (
 					<div className="p-4 mb-4 text-sm text-red-700 bg-red-100 rounded-lg">
@@ -179,7 +280,7 @@ export default function ImageUpload() {
 						htmlFor="prompt"
 						className="block text-sm font-medium text-gray-700"
 					>
-						Your Prompt
+						Mask Prompt
 					</label>
 					<textarea
 						id="prompt"
@@ -187,7 +288,9 @@ export default function ImageUpload() {
 						rows={4}
 						className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
 						placeholder="Describe what you want ChatGPT to analyze about the image..."
-					/>
+					>
+						{wallPrompt}
+					</textarea>
 				</div>
 
 				<div>
@@ -195,7 +298,7 @@ export default function ImageUpload() {
 						htmlFor="image"
 						className="block text-sm font-medium text-gray-700"
 					>
-						Upload Image
+						Upload Photo
 					</label>
 					<input
 						type="file"
@@ -260,7 +363,7 @@ export default function ImageUpload() {
 								Processing...
 							</>
 						) : (
-							"Submit for Analysis"
+							"Generate Paint Preview"
 						)}
 					</button>
 				</div>
@@ -290,7 +393,7 @@ export default function ImageUpload() {
 					<h2 className="text-xl font-semibold mb-4">Processed Image:</h2>
 					<div className="mt-4 flex flex-col md:flex-row gap-6">
 						{/* Display the returned image or loading indicator */}
-						<div className="w-full md:w-1/3">
+						<div className="w-full">
 							<div className="border border-gray-300 rounded-md overflow-hidden">
 								{processingStatus === "completed" ? (
 									<img
@@ -310,20 +413,6 @@ export default function ImageUpload() {
 										</div>
 									</div>
 								)}
-							</div>
-						</div>
-
-						{/* Display the status information */}
-						<div className="w-full md:w-2/3">
-							<div className="bg-white p-4 rounded-md border border-gray-300">
-								<h3 className="font-medium text-gray-900 mb-2">Status:</h3>
-								<p className="text-gray-700 whitespace-pre-line">
-									{processingStatus === "completed"
-										? "Image processing complete!"
-										: processingStatus === "pending"
-										? "Your image is being processed. This may take a few seconds..."
-										: "Waiting for status update..."}
-								</p>
 							</div>
 						</div>
 					</div>

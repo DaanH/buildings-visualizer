@@ -56,6 +56,12 @@ export async function storeImage(
 	// Use multi to perform operations atomically
 	const multi = client.multi();
 
+	console.log(
+		"storing image in Redis with key:",
+		imageKey,
+		", ",
+		imageStr?.substring(0, 100) || "[empty]"
+	);
 	if (imageStr) multi.hSet(imageKey, "data", imageStr);
 
 	// Store metadata fields
@@ -113,14 +119,14 @@ export async function getImage(imageId: string) {
 export async function getImageField(imageId: string, field: string) {
 	const client = await getRedisClient();
 	const imageKey = `image:${imageId}`;
-	
+
 	// Get just the specified field
 	const value = await client.hGet(imageKey, field);
-	
+
 	if (!value) {
 		return null;
 	}
-	
+
 	// Try to parse JSON if it looks like JSON
 	try {
 		return JSON.parse(value);
