@@ -1,2 +1,5 @@
-export const wallPrompt =
+export const wallMaskPrompt =
 	"Using the provided image, generate a grayscale segmentation mask that highlights only the visible painted or wallpapered interior walls. Wall areas should be in white (255), with smooth gradients and anti-aliasing at edges for realistic blending. All other elements — including furniture, people, pets, floors, ceilings, windows, curtains, doors, moldings, artwork, mirrors, lights, and any non-wall surfaces — should be completely black (0). Where semi-transparent or translucent objects (like sheer curtains or glass) overlap the wall, represent them with appropriate grayscale values to reflect partial visibility. This mask will be used to replace wall paint or wallpaper, so precise and accurate delineation of wall surfaces is essential.";
+
+export const wallPrompt =
+	"Edit the provided image by replacing the color of the walls with this specific color: #FF00AA. Keep the rest of the image unchanged. The walls should be smooth and realistic. The walls should be in the same shape as the original image. Only change the color of the walls. Keep the lighting and other elements of the image unchanged.";

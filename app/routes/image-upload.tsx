@@ -1,7 +1,8 @@
 import { Form, useActionData, useNavigation } from "react-router";
-import * as React from "react";
+import { useEffect, useState } from "react";
 import { v4 as uuidv4 } from "uuid";
-import { wallPrompt } from "~/utils/prompts";
+import { wallPrompt } from "../utils/prompts";
+import { convertFileToBase64 } from "./api/helpers";
 
 /**
  * Converts any image file to PNG format in-memory without saving to disk
@@ -103,14 +104,15 @@ export async function action({ request }: ActionFunctionArgs) {
 	try {
 		const imageId = uuidv4();
 
+		const imageBase64 = await convertFileToBase64(file);
 		// Store an empty image with a status of "pending"
-		await storeImage(imageId, null, { status: "pending" });
+		await storeImage(imageId, imageBase64, { status: "pending" });
 
 		// Process the image and prompt directly with the extracted data
 		processAndStoreImage(imageId, prompt, file);
 
 		console.log("Image stored in Redis with ID:", imageId);
-		return json({ response: { imageId } });
+		return json({ response: { imageId, imageBase64 } });
 	} catch (error) {
 		console.log(error);
 		return json({ error: "Failed to process image and prompt" }, 500);
@@ -156,6 +158,7 @@ export default function ImageUpload() {
 		| {
 				response: {
 					imageId: string;
+					imageBase64: string;
 				};
 				error?: undefined;
 		  }
@@ -167,15 +170,14 @@ export default function ImageUpload() {
 	const actionData = useActionData<typeof action>() as ActionData;
 	const navigation = useNavigation();
 	const isSubmitting = navigation.state === "submitting";
-	const [previewImage, setPreviewImage] = React.useState<string | null>(null);
-	const [selectedFile, setSelectedFile] = React.useState<File | null>(null);
-	const [processingStatus, setProcessingStatus] = React.useState<string | null>(
-		null
-	);
-	const [imageReady, setImageReady] = React.useState(false);
+	const [previewImage, setPreviewImage] = useState<string | null>(null);
+	const [sentImage, setSentImage] = useState<string | null>(null);
+	const [selectedFile, setSelectedFile] = useState<File | null>(null);
+	const [processingStatus, setProcessingStatus] = useState<string | null>(null);
+	const [imageReady, setImageReady] = useState(false);
 
 	// Poll for image status updates
-	React.useEffect(() => {
+	useEffect(() => {
 		let intervalId: number;
 		let isMounted = true;
 
@@ -394,7 +396,12 @@ export default function ImageUpload() {
 					<div className="mt-4 flex flex-col md:flex-row gap-6">
 						{/* Display the returned image or loading indicator */}
 						<div className="w-full">
-							<div className="border border-gray-300 rounded-md overflow-hidden">
+							<div className="relative border border-gray-300 rounded-md overflow-hidden">
+								<img
+									className="inset-0 absolute"
+									src={`data:image/png;base64,${actionData.response.imageBase64}`}
+									alt="Sent"
+								/>
 								{processingStatus === "completed" ? (
 									<img
 										src={`/api/image/${actionData.response.imageId}`}
@@ -402,16 +409,14 @@ export default function ImageUpload() {
 										className="w-full h-auto"
 									/>
 								) : (
-									<div className="flex items-center justify-center h-64 bg-gray-100">
-										<div className="text-center p-4">
-											<div className="inline-block animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-blue-500 mb-2"></div>
-											<p className="text-gray-600">
-												{processingStatus === "pending"
-													? "Processing image..."
-													: "Waiting for status..."}
-											</p>
+									<>
+										<div className="flex items-center justify-center h-64 bg-gray-100">
+											<div className="text-center p-4">
+												<div className="inline-block animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-blue-500 mb-2"></div>
+												<p className="text-gray-600">"Processing image..."</p>
+											</div>
 										</div>
-									</div>
+									</>
 								)}
 							</div>
 						</div>

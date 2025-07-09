@@ -4,6 +4,7 @@
  */
 
 import { OpenAI, type Uploadable } from "openai";
+import { convertFileToBase64 } from "./helpers";
 
 // Define types for OpenAI API requests
 type ChatCompletionMessageParam = {
@@ -21,60 +22,6 @@ type ChatCompletionMessageParam = {
 	tool_calls?: Array<any>;
 };
 
-/**
- * Convert a file to base64 encoding
- */
-async function convertFileToBase64(file: File): Promise<string> {
-	// Get the file data as a buffer
-	let fileData: ArrayBuffer | Buffer;
-
-	console.log("File type:", file.type, "File name:", file.name);
-
-	// Check what methods are available on the file object
-	const methods = Object.keys(file).filter(
-		(key) => typeof (file as any)[key] === "function"
-	);
-	console.log("Available methods on file:", methods);
-
-	// Try different approaches to get the file data
-	if (typeof (file as any).stream === "function") {
-		console.log("Using stream method");
-		// This is a Node.js specific approach
-		const chunks: Buffer[] = [];
-		const stream = (file as any).stream();
-		for await (const chunk of stream) {
-			chunks.push(Buffer.from(chunk));
-		}
-		fileData = Buffer.concat(chunks);
-	} else if ((file as any).buffer) {
-		console.log("Using buffer property");
-		fileData = (file as any).buffer;
-	} else {
-		throw new Error("Unsupported file data");
-	}
-
-	// Convert to base64 string
-	if (typeof Buffer !== "undefined" && Buffer.isBuffer(fileData)) {
-		// Node.js Buffer
-		return (fileData as Buffer).toString("base64");
-	} else {
-		// Browser ArrayBuffer
-		const uint8Array = new Uint8Array(fileData as ArrayBuffer);
-
-		// Convert to binary string in chunks to avoid call stack issues
-		const chunkSize = 8192;
-		let binaryString = "";
-
-		for (let i = 0; i < uint8Array.length; i += chunkSize) {
-			const chunk = Array.from(uint8Array.slice(i, i + chunkSize));
-			binaryString += String.fromCharCode.apply(null, chunk);
-		}
-
-		// Finally encode as base64
-		return btoa(binaryString);
-	}
-}
-
 async function generateImageWithGptResponse(
 	apiKey: string,
 	prompt: string,
@@ -85,7 +32,7 @@ async function generateImageWithGptResponse(
 	const base64Image = await convertFileToBase64(file);
 
 	const response = await openai.responses.create({
-		model: "gpt-4.1",
+		model: "gpt-image-1",
 		input: [
 			{
 				role: "user",
@@ -97,7 +44,7 @@ async function generateImageWithGptResponse(
 					{
 						type: "input_image",
 						image_url: `data:image/jpeg;base64,${base64Image}`,
-						detail: "low",
+						detail: "auto",
 					},
 				],
 			},
@@ -142,11 +89,12 @@ async function generateImageWithGptImage(
 	try {
 		// Now use gpt-image-1 to generate the image based on the detailed description
 		const imageResponse = await openai.images.edit({
-			model: "dall-e-2",
+			model: "gpt-image-1",
 			prompt: prompt,
 			image: file,
 			n: 1,
 			size: "1024x1024",
+			quality: "low",
 		});
 		console.log("Image response:", imageResponse);
 
@@ -189,7 +137,7 @@ export async function processImageAndPrompt(
 
 	try {
 		// Generate image directly using GPT-4 Vision
-		const generatedImageBase64 = await generateImageWithGptResponse(
+		const generatedImageBase64 = await generateImageWithGptImage(
 			apiKey,
 			prompt,
 			file
