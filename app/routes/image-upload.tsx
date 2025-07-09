@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { v4 as uuidv4 } from "uuid";
 import { paintColors } from "../utils/prompts";
 import { convertFileToBase64 } from "./api/helpers";
+import ImageFlipper from "../components/ImageFlipper";
 
 /**
  * Converts any image file to PNG format in-memory without saving to disk
@@ -126,7 +127,11 @@ export async function action({ request }: ActionFunctionArgs) {
 	// Replace {{color}} placeholder with the selected color hex value
 	const prompt = wallPrompt.replace("{{color}}", colorHex);
 
-	console.log("Form data received:", { colorHex, prompt, fileName: file?.name });
+	console.log("Form data received:", {
+		colorHex,
+		prompt,
+		fileName: file?.name,
+	});
 
 	if (!file) {
 		return json({ error: "Image is required" }, 400);
@@ -184,27 +189,31 @@ export function meta() {
 }
 
 // Color swatch component for paint color selection
-function ColorSwatch({ 
-	color, 
-	selectedColor, 
-	setSelectedColor 
-}: { 
-	color: { name: string; hex: string }; 
-	selectedColor: { name: string; hex: string } | null; 
-	setSelectedColor: (color: { name: string; hex: string }) => void 
+function ColorSwatch({
+	color,
+	selectedColor,
+	setSelectedColor,
+}: {
+	color: { name: string; hex: string };
+	selectedColor: { name: string; hex: string } | null;
+	setSelectedColor: (color: { name: string; hex: string }) => void;
 }) {
 	const isSelected = selectedColor?.hex === color.hex;
 	return (
 		<button
 			type="button"
-			className={`flex flex-col items-center p-2 rounded-md transition-all ${isSelected ? 'ring-2 ring-indigo-500 scale-105' : 'hover:scale-105'}`}
+			className={`flex flex-col items-center p-2 rounded-md transition-all ${
+				isSelected ? "ring-2 ring-indigo-500 scale-105" : "hover:scale-105"
+			}`}
 			onClick={() => setSelectedColor(color)}
 		>
-			<div 
+			<div
 				className="w-full h-12 rounded-md mb-1 border border-gray-300"
 				style={{ backgroundColor: color.hex }}
 			/>
-			<span className="text-xs text-gray-700 truncate w-full text-center">{color.name}</span>
+			<span className="text-xs text-gray-700 truncate w-full text-center">
+				{color.name}
+			</span>
 		</button>
 	);
 }
@@ -473,19 +482,23 @@ export default function ImageUpload() {
 					<div className="mt-4 flex flex-col md:flex-row gap-6">
 						{/* Display the returned image or loading indicator */}
 						<div className="w-full">
-							<div className="relative border border-gray-300 rounded-md overflow-hidden">
+							<div className="relative border aspect-square border-gray-300 rounded-md overflow-hidden">
 								{processingStatus === "completed" ? (
-									<img
-										src={`/api/image/${actionData.response.imageId}`}
-										alt="Processed"
-										className="w-full h-auto"
-									/>
+									<>
+										<ImageFlipper
+											image1={`data:image/png;base64,${actionData.response.imageBase64}`}
+											image2={`/api/image/${actionData.response.imageId}`}
+											alt1="Original Image"
+											alt2="Processed Image"
+											className="w-full h-full"
+										/>
+									</>
 								) : (
 									<>
 										<div className="flex items-center justify-center h-64 bg-gray-100">
 											<div className="text-center p-4">
 												<div className="inline-block animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-blue-500 mb-2"></div>
-												<p className="text-gray-600">"Processing image..."</p>
+												<p className="text-gray-600">Processing image...</p>
 											</div>
 										</div>
 									</>
