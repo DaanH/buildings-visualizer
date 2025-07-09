@@ -9,11 +9,6 @@ import { convertFileToBase64 } from "./api/helpers";
  * Uses Canvas API which is compatible with ESM
  */
 async function convertToPng(file: File): Promise<File> {
-	// If already a PNG, return the file as is
-	if (file.type === "image/png") {
-		return file;
-	}
-
 	// Create a blob URL from the file
 	const blobUrl = URL.createObjectURL(file);
 
@@ -27,17 +22,48 @@ async function convertToPng(file: File): Promise<File> {
 		img.src = blobUrl;
 	});
 
-	// Create a canvas to draw the image
+	// Create a canvas to draw the image with target dimensions 1024x1024
 	const canvas = document.createElement("canvas");
-	canvas.width = img.width;
-	canvas.height = img.height;
+	canvas.width = 1024;
+	canvas.height = 1024;
 
-	// Draw the image on the canvas
+	// Get the canvas context
 	const ctx = canvas.getContext("2d");
 	if (!ctx) {
 		throw new Error("Failed to get canvas context");
 	}
-	ctx.drawImage(img, 0, 0);
+
+	// Calculate dimensions for cropping to maintain aspect ratio
+	let sourceX = 0;
+	let sourceY = 0;
+	let sourceWidth = img.width;
+	let sourceHeight = img.height;
+
+	// If the image is not square, crop it to make it square
+	if (sourceWidth !== sourceHeight) {
+		if (sourceWidth > sourceHeight) {
+			// Landscape image: crop the sides
+			sourceX = (sourceWidth - sourceHeight) / 2;
+			sourceWidth = sourceHeight;
+		} else {
+			// Portrait image: crop the top and bottom
+			sourceY = (sourceHeight - sourceWidth) / 2;
+			sourceHeight = sourceWidth;
+		}
+	}
+
+	// Draw the image on the canvas with cropping and resizing
+	ctx.drawImage(
+		img,
+		sourceX,
+		sourceY,
+		sourceWidth,
+		sourceHeight,
+		0,
+		0,
+		1024,
+		1024
+	);
 
 	// Clean up the blob URL
 	URL.revokeObjectURL(blobUrl);
@@ -282,7 +308,7 @@ export default function ImageUpload() {
 						htmlFor="prompt"
 						className="block text-sm font-medium text-gray-700"
 					>
-						Mask Prompt
+						Prompt
 					</label>
 					<textarea
 						id="prompt"
@@ -311,23 +337,36 @@ export default function ImageUpload() {
 						required
 						onChange={handleFileChange}
 					/>
-
-					{previewImage && (
-						<div className="mt-4">
-							<p className="text-sm text-gray-500 mb-2">Preview:</p>
-							<div className="relative w-32 h-32 overflow-hidden rounded-md border border-gray-300">
-								<img
-									src={previewImage}
-									alt="Preview"
-									className="object-cover w-full h-full"
-									onLoad={() => {
-										// Free memory when the image is loaded
-										URL.revokeObjectURL(previewImage);
-									}}
-								/>
+					<div className="flex gap-4">
+						{previewImage && (
+							<div className="mt-4">
+								<p className="text-sm text-gray-500 mb-2">uploaded:</p>
+								<div className="relative w-32 h-32 overflow-hidden rounded-md border border-gray-300">
+									<img
+										src={previewImage}
+										alt="Preview"
+										className="object-cover w-full h-full"
+										onLoad={() => {
+											// Free memory when the image is loaded
+											URL.revokeObjectURL(previewImage);
+										}}
+									/>
+								</div>
 							</div>
-						</div>
-					)}
+						)}
+						{actionData?.response?.imageBase64 && (
+							<div className="mt-4">
+								<p className="text-sm text-gray-500 mb-2">processed:</p>
+								<div className="relative w-32 h-32 overflow-hidden rounded-md border border-gray-300">
+									<img
+										className="inset-0 absolute"
+										src={`data:image/png;base64,${actionData.response.imageBase64}`}
+										alt="Sent"
+									/>
+								</div>
+							</div>
+						)}
+					</div>
 				</div>
 
 				<div className="mt-6">
@@ -392,16 +431,11 @@ export default function ImageUpload() {
 
 			{actionData?.response && (
 				<div className="mt-8 p-6 bg-gray-50 rounded-lg shadow">
-					<h2 className="text-xl font-semibold mb-4">Processed Image:</h2>
+					<h2 className="text-xl font-semibold mb-4">Result Image:</h2>
 					<div className="mt-4 flex flex-col md:flex-row gap-6">
 						{/* Display the returned image or loading indicator */}
 						<div className="w-full">
 							<div className="relative border border-gray-300 rounded-md overflow-hidden">
-								<img
-									className="inset-0 absolute"
-									src={`data:image/png;base64,${actionData.response.imageBase64}`}
-									alt="Sent"
-								/>
 								{processingStatus === "completed" ? (
 									<img
 										src={`/api/image/${actionData.response.imageId}`}
