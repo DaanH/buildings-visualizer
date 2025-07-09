@@ -1,7 +1,7 @@
 import { Form, useActionData, useNavigation } from "react-router";
 import { useEffect, useState } from "react";
 import { v4 as uuidv4 } from "uuid";
-import { wallPrompt } from "../utils/prompts";
+import { paintColors } from "../utils/prompts";
 import { convertFileToBase64 } from "./api/helpers";
 
 /**
@@ -104,10 +104,12 @@ const json = (data: any, status: number = 200) => {
 export async function action({ request }: ActionFunctionArgs) {
 	// Import Redis utilities only in server-side code
 	const { storeImage } = await import("../utils/redis.server");
+	// Import the wallPrompt from prompts.ts
+	const { wallPrompt } = await import("../utils/prompts");
 
 	// Process the form data here to avoid double consumption
 	const formData = await request.formData();
-	const prompt = formData.get("prompt") as string;
+	const colorHex = formData.get("colorHex") as string;
 	const file = formData.get("image") as File;
 
 	// Validate file type - OpenAI requires PNG
@@ -121,7 +123,10 @@ export async function action({ request }: ActionFunctionArgs) {
 		);
 	}
 
-	console.log("Form data received:", { prompt, fileName: file?.name });
+	// Replace {{color}} placeholder with the selected color hex value
+	const prompt = wallPrompt.replace("{{color}}", colorHex);
+
+	console.log("Form data received:", { colorHex, prompt, fileName: file?.name });
 
 	if (!file) {
 		return json({ error: "Image is required" }, 400);
@@ -178,6 +183,32 @@ export function meta() {
 	];
 }
 
+// Color swatch component for paint color selection
+function ColorSwatch({ 
+	color, 
+	selectedColor, 
+	setSelectedColor 
+}: { 
+	color: { name: string; hex: string }; 
+	selectedColor: { name: string; hex: string } | null; 
+	setSelectedColor: (color: { name: string; hex: string }) => void 
+}) {
+	const isSelected = selectedColor?.hex === color.hex;
+	return (
+		<button
+			type="button"
+			className={`flex flex-col items-center p-2 rounded-md transition-all ${isSelected ? 'ring-2 ring-indigo-500 scale-105' : 'hover:scale-105'}`}
+			onClick={() => setSelectedColor(color)}
+		>
+			<div 
+				className="w-full h-12 rounded-md mb-1 border border-gray-300"
+				style={{ backgroundColor: color.hex }}
+			/>
+			<span className="text-xs text-gray-700 truncate w-full text-center">{color.name}</span>
+		</button>
+	);
+}
+
 export default function ImageUpload() {
 	// Define ActionData type for the return value of the action function
 	type ActionData =
@@ -201,6 +232,7 @@ export default function ImageUpload() {
 	const [selectedFile, setSelectedFile] = useState<File | null>(null);
 	const [processingStatus, setProcessingStatus] = useState<string | null>(null);
 	const [imageReady, setImageReady] = useState(false);
+	const [selectedColor, setSelectedColor] = useState(paintColors[0]);
 
 	// Poll for image status updates
 	useEffect(() => {
@@ -305,20 +337,26 @@ export default function ImageUpload() {
 				)}
 				<div>
 					<label
-						htmlFor="prompt"
-						className="block text-sm font-medium text-gray-700"
+						htmlFor="colorPicker"
+						className="block text-sm font-medium text-gray-700 mb-2"
 					>
-						Prompt
+						Select Wall Paint Color
 					</label>
-					<textarea
-						id="prompt"
-						name="prompt"
-						rows={4}
-						className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
-						placeholder="Describe what you want ChatGPT to analyze about the image..."
-					>
-						{wallPrompt}
-					</textarea>
+					<div className="grid grid-cols-3 md:grid-cols-6 gap-3">
+						{paintColors.map((color) => (
+							<ColorSwatch
+								key={color.hex}
+								color={color}
+								selectedColor={selectedColor}
+								setSelectedColor={setSelectedColor}
+							/>
+						))}
+					</div>
+					<input
+						type="hidden"
+						name="colorHex"
+						value={selectedColor?.hex || paintColors[0].hex}
+					/>
 				</div>
 
 				<div>
