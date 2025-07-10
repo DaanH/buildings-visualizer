@@ -12,7 +12,7 @@ let redisClient: ReturnType<typeof createClient> | null = null;
 /**
  * Get or create Redis client instance
  */
-export async function getRedisClient() {
+async function getRedisClient() {
 	if (!redisClient) {
 		// Create a new Redis client
 		redisClient = createClient({

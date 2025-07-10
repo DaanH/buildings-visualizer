@@ -103,8 +103,8 @@ const json = (data: any, status: number = 200) => {
 };
 
 export async function action({ request }: ActionFunctionArgs) {
-	// Import Redis utilities only in server-side code
-	const { storeImage } = await import("../utils/redis.server");
+	// Import SQLite utilities only in server-side code
+	const { storeImage } = await import("../utils/sqlite.server");
 	// Import the wallPrompt from prompts.ts
 	const { wallPrompt } = await import("../utils/prompts");
 
@@ -147,7 +147,7 @@ export async function action({ request }: ActionFunctionArgs) {
 		// Process the image and prompt directly with the extracted data
 		processAndStoreImage(imageId, prompt, file);
 
-		console.log("Image stored in Redis with ID:", imageId);
+		console.log("Image stored in SQLite with ID:", imageId);
 		return json({ response: { imageId, imageBase64 } });
 	} catch (error) {
 		console.log(error);
@@ -160,7 +160,7 @@ const processAndStoreImage = async (
 	prompt: string,
 	file: File
 ) => {
-	const { storeImage } = await import("../utils/redis.server");
+	const { storeImage } = await import("../utils/sqlite.server");
 	const { processImageAndPrompt } = await import("./api/chatgpt");
 
 	const response = await processImageAndPrompt(prompt, file);
@@ -170,7 +170,7 @@ const processAndStoreImage = async (
 	// Extract the base64 data from the data URL
 	const base64Data = response.image.split(";base64,").pop() as string;
 
-	// Store the image in Redis with metadata
+	// Store the image in SQLite with metadata
 	await storeImage(imageId, base64Data, {
 		fileName: file.name,
 		timestamp: new Date().toISOString(),

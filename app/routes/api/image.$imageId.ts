@@ -1,8 +1,8 @@
 /**
- * API endpoint to retrieve images from Redis
+ * API endpoint to retrieve images from SQLite
  * GET /api/image/:imageId - Returns the image data with content type
  */
-import { getImage } from "../../utils/redis.server";
+import { getImage } from "../../utils/sqlite.server";
 
 // Define LoaderFunctionArgs type since it's not exported from @react-router/node
 type LoaderFunctionArgs = {

@@ -23,10 +23,10 @@ export async function loader({ params }: LoaderFunctionArgs) {
 	}
 
 	try {
-		// Import Redis utilities only in server-side code
-		const { getImageField } = await import("../../utils/redis.server");
+		// Import SQLite utilities only in server-side code
+		const { getImageField } = await import("../../utils/sqlite.server");
 
-		// Get the status field from Redis
+		// Get the status field from SQLite
 		const status = await getImageField(imageId, "status");
 
 		if (status === null) {
