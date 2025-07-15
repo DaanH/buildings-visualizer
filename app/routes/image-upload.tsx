@@ -30,9 +30,20 @@ export async function action({ request }: ActionFunctionArgs) {
 
 	// Process the form data here to avoid double consumption
 	const formData = await request.formData();
+
+	// log all formdata fuelds and values
+	console.log("Form data received:");
+	for (const [key, value] of formData.entries()) {
+		console.log(`[${key}]`, value);
+	}
+
 	const colorHex = formData.get("colorHex") as string;
 	const file = formData.get("image") as File;
 	const maskFile = (formData.get("mask") as File) || null;
+
+	if (!file) {
+		return json({ error: "Image is required" }, 400);
+	}
 
 	// Validate file type - OpenAI requires PNG
 	const validTypes = ["image/png"];
@@ -45,29 +56,14 @@ export async function action({ request }: ActionFunctionArgs) {
 		);
 	}
 
+	let hasValidMask = maskFile && validTypes.includes(maskFile.type);
 	// Validate mask file type if provided
-	if (maskFile && !validTypes.includes(maskFile.type)) {
-		return json(
-			{
-				error: `Unsupported mask format: ${maskFile.type}. Please use PNG format.`,
-			},
-			400
-		);
+	if (!hasValidMask) {
+		console.log("unsupported mask: ", maskFile.type, "size: ", maskFile.size);
 	}
 
 	// Replace {{color}} placeholder with the selected color hex value
 	const prompt = wallPrompt.replace("{{color}}", colorHex);
-
-	console.log("Form data received:", {
-		colorHex,
-		prompt,
-		fileName: file?.name,
-		maskFileName: maskFile?.name,
-	});
-
-	if (!file) {
-		return json({ error: "Image is required" }, 400);
-	}
 
 	try {
 		const imageId = uuidv4();
@@ -77,7 +73,7 @@ export async function action({ request }: ActionFunctionArgs) {
 		await storeImage(imageId, imageBase64, { status: "pending" });
 
 		// Process the image and prompt directly with the extracted data
-		processAndStoreImage(imageId, prompt, file, maskFile);
+		processAndStoreImage(imageId, prompt, file, hasValidMask ? maskFile : null);
 
 		console.log("Image stored in SQLite with ID:", imageId);
 		return json({ response: { imageId, imageBase64 } });
@@ -96,6 +92,7 @@ const processAndStoreImage = async (
 	const { storeImage } = await import("../utils/sqlite.server");
 	const { processImageAndPrompt } = await import("./api/chatgpt");
 
+	console.log("Processing image and prompt, maskFile: ", maskFile);
 	const response = await processImageAndPrompt(prompt, file, maskFile);
 
 	if (!response) return;
@@ -183,11 +180,9 @@ export default function ImageUpload() {
 	const isSubmitting = navigation.state === "submitting";
 	const [previewImage, setPreviewImage] = useState<string | null>(null);
 	const [previewMaskImage, setPreviewMaskImage] = useState<string | null>(null);
-	const [sentImage, setSentImage] = useState<string | null>(null);
 	const [selectedFile, setSelectedFile] = useState<File | null>(null);
 	const [selectedMaskFile, setSelectedMaskFile] = useState<File | null>(null);
 	const [processingStatus, setProcessingStatus] = useState<string | null>(null);
-	const [imageReady, setImageReady] = useState(false);
 	const [selectedColor, setSelectedColor] = useState(paintColors[0]);
 
 	// State for API error messages
@@ -215,12 +210,14 @@ export default function ImageUpload() {
 
 					// Handle error status
 					if (data.status === "error") {
-						setApiError(data.errorMessage || "An error occurred while processing the image");
+						setApiError(
+							data.errorMessage ||
+								"An error occurred while processing the image"
+						);
 						clearInterval(intervalId);
 					}
 					// If processing is complete, stop polling
 					else if (data.status === "completed") {
-						setImageReady(true);
 						clearInterval(intervalId);
 					}
 				}
@@ -232,7 +229,7 @@ export default function ImageUpload() {
 		if (actionData?.response?.imageId) {
 			// Reset error state when starting a new request
 			setApiError(null);
-			
+
 			// Initial check
 			checkImageStatus();
 
@@ -479,25 +476,6 @@ export default function ImageUpload() {
 				</div>
 			</Form>
 
-			{/* Show loading state while submitting */}
-			{isSubmitting && !actionData?.response && (
-				<div className="mt-8 p-6 bg-gray-50 rounded-lg shadow flex flex-col items-center justify-center">
-					<div className="animate-pulse flex space-x-4 w-full">
-						<div className="flex-1 space-y-6 py-1">
-							<div className="h-40 bg-gray-200 rounded"></div>
-							<div className="space-y-3">
-								<div className="h-2 bg-gray-200 rounded"></div>
-								<div className="h-2 bg-gray-200 rounded"></div>
-								<div className="h-2 bg-gray-200 rounded"></div>
-							</div>
-						</div>
-					</div>
-					<p className="text-gray-500 mt-4">
-						Processing your image and prompt...
-					</p>
-				</div>
-			)}
-
 			{actionData?.response && (
 				<div className="mt-8 p-6 bg-gray-50 rounded-lg shadow">
 					<h2 className="text-xl font-semibold mb-4">Result Image:</h2>
@@ -519,21 +497,34 @@ export default function ImageUpload() {
 									<>
 										<div className="flex items-center justify-center h-64 bg-red-50">
 											<div className="text-center p-4">
-												<svg className="mx-auto h-12 w-12 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-													<path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+												<svg
+													className="mx-auto h-12 w-12 text-red-500"
+													fill="none"
+													viewBox="0 0 24 24"
+													stroke="currentColor"
+												>
+													<path
+														strokeLinecap="round"
+														strokeLinejoin="round"
+														strokeWidth={2}
+														d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+													/>
 												</svg>
-												<h3 className="mt-2 text-sm font-medium text-red-800">Processing Error</h3>
-												<p className="mt-1 text-sm text-red-700">{apiError || "An error occurred while processing your image"}</p>
+												<h3 className="mt-2 text-sm font-medium text-red-800">
+													Processing Error
+												</h3>
+												<p className="mt-1 text-sm text-red-700">
+													{apiError ||
+														"An error occurred while processing your image"}
+												</p>
 											</div>
 										</div>
 									</>
 								) : (
 									<>
-										<div className="flex items-center justify-center h-64 bg-gray-100">
-											<div className="text-center p-4">
-												<div className="inline-block animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-blue-500 mb-2"></div>
-												<p className="text-gray-600">Processing image...</p>
-											</div>
+										<div className="flex items-center flex-col justify-center h-full bg-gray-100 gap-8">
+											<div className="inline-block animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-blue-500 mb-2"></div>
+											<p className="text-gray-600">Processing image...</p>
 										</div>
 									</>
 								)}

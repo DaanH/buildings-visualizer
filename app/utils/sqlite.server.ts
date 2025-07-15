@@ -59,6 +59,29 @@ async function getDatabase(): Promise<Database> {
 }
 
 /**
+ * Clean up old images and metadata from SQLite
+ * Removes entries older than 30 minutes
+ * @returns Object containing the number of deleted entries and their ages
+ */
+export async function cleanupOldImages(db: Database) {
+	// Delete old images - metadata will be automatically deleted due to foreign key constraints
+	const imagesDeleted = db
+		.prepare(
+			"DELETE FROM images WHERE createdAt < datetime('now', '-30 minutes')"
+		)
+		.run().changes;
+
+	// Log the deleted entries and their ages
+	if (imagesDeleted > 0) {
+		console.log(
+			`Cleaned up ${imagesDeleted} images (and associated metadata) older than 30 minutes`
+		);
+	}
+
+	return imagesDeleted;
+}
+
+/**
  * Store an image in SQLite
  * @param imageId - Unique identifier for the image
  * @param imageData - Image data as base64 string or Buffer
@@ -71,16 +94,18 @@ export async function storeImage(
 ) {
 	const db = await getDatabase();
 
+	// Clean up old images before storing a new one
+	await cleanupOldImages(db);
+
 	// Convert Buffer to base64 string if needed
 	const imageStr = Buffer.isBuffer(imageData)
 		? imageData.toString("base64")
 		: imageData;
 
 	console.log(
-		"storing image in SQLite with id:",
-		imageId,
-		", ",
-		imageStr?.substring(0, 100) || "[empty]"
+		`storing image in SQLite with id: ${imageId}, ${
+			imageStr?.substring(0, 100) || "[empty]"
+		}`
 	);
 
 	// Extract specific fields that are stored directly on the Image table
@@ -163,7 +188,9 @@ export async function getImage(imageId: string) {
 	};
 
 	// Get the image record
-	const image = db.prepare("SELECT * FROM images WHERE id = ?").get(imageId) as ImageRecord | undefined;
+	const image = db.prepare("SELECT * FROM images WHERE id = ?").get(imageId) as
+		| ImageRecord
+		| undefined;
 
 	// If no data found, return null
 	if (!image) {
@@ -263,4 +290,4 @@ export async function deleteImage(imageId: string) {
 // Initialize the database
 (async () => {
 	await getDatabase();
-})().catch(err => console.error('Failed to initialize database:', err));
+})().catch((err) => console.error("Failed to initialize database:", err));
