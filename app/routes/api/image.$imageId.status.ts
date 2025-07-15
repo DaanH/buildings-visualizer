@@ -33,6 +33,12 @@ export async function loader({ params }: LoaderFunctionArgs) {
 			return json({ error: "Image not found" }, { status: 404 });
 		}
 
+		// If status is error, get the error message
+		if (status === "error") {
+			const errorMessage = await getImageField(imageId, "errorMessage");
+			return json({ status, errorMessage: errorMessage || "Unknown error occurred" });
+		}
+
 		return json({ status });
 	} catch (error) {
 		console.error("Error fetching image status:", error);

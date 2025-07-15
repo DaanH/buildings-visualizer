@@ -2,89 +2,9 @@ import { Form, useActionData, useNavigation } from "react-router";
 import { useEffect, useState } from "react";
 import { v4 as uuidv4 } from "uuid";
 import { paintColors } from "../utils/prompts";
-import { convertFileToBase64 } from "./api/helpers";
+import { convertFileToBase64, convertToPng } from "./api/helpers";
+import { PreviewThumbnail } from "../components/PreviewThumbnail";
 import ImageFlipper from "../components/ImageFlipper";
-
-/**
- * Converts any image file to PNG format in-memory without saving to disk
- * Uses Canvas API which is compatible with ESM
- */
-async function convertToPng(file: File): Promise<File> {
-	// Create a blob URL from the file
-	const blobUrl = URL.createObjectURL(file);
-
-	// Create an image element to load the file
-	const img = new Image();
-
-	// Wait for the image to load
-	await new Promise<void>((resolve, reject) => {
-		img.onload = () => resolve();
-		img.onerror = () => reject(new Error("Failed to load image"));
-		img.src = blobUrl;
-	});
-
-	// Create a canvas to draw the image with target dimensions 1024x1024
-	const canvas = document.createElement("canvas");
-	canvas.width = 1024;
-	canvas.height = 1024;
-
-	// Get the canvas context
-	const ctx = canvas.getContext("2d");
-	if (!ctx) {
-		throw new Error("Failed to get canvas context");
-	}
-
-	// Calculate dimensions for cropping to maintain aspect ratio
-	let sourceX = 0;
-	let sourceY = 0;
-	let sourceWidth = img.width;
-	let sourceHeight = img.height;
-
-	// If the image is not square, crop it to make it square
-	if (sourceWidth !== sourceHeight) {
-		if (sourceWidth > sourceHeight) {
-			// Landscape image: crop the sides
-			sourceX = (sourceWidth - sourceHeight) / 2;
-			sourceWidth = sourceHeight;
-		} else {
-			// Portrait image: crop the top and bottom
-			sourceY = (sourceHeight - sourceWidth) / 2;
-			sourceHeight = sourceWidth;
-		}
-	}
-
-	// Draw the image on the canvas with cropping and resizing
-	ctx.drawImage(
-		img,
-		sourceX,
-		sourceY,
-		sourceWidth,
-		sourceHeight,
-		0,
-		0,
-		1024,
-		1024
-	);
-
-	// Clean up the blob URL
-	URL.revokeObjectURL(blobUrl);
-
-	// Convert the canvas to a PNG blob
-	const blob = await new Promise<Blob>((resolve) => {
-		canvas.toBlob((b) => {
-			if (!b) {
-				throw new Error("Failed to create blob");
-			}
-			resolve(b);
-		}, "image/png");
-	});
-
-	// Create a new File object with the PNG blob
-	return new File([blob], file.name.replace(/\.[^\.]+$/, ".png"), {
-		type: "image/png",
-		lastModified: file.lastModified,
-	});
-}
 
 // Define ActionFunctionArgs type since it's not exported from @react-router/node
 type ActionFunctionArgs = {
@@ -112,6 +32,7 @@ export async function action({ request }: ActionFunctionArgs) {
 	const formData = await request.formData();
 	const colorHex = formData.get("colorHex") as string;
 	const file = formData.get("image") as File;
+	const maskFile = (formData.get("mask") as File) || null;
 
 	// Validate file type - OpenAI requires PNG
 	const validTypes = ["image/png"];
@@ -124,6 +45,16 @@ export async function action({ request }: ActionFunctionArgs) {
 		);
 	}
 
+	// Validate mask file type if provided
+	if (maskFile && !validTypes.includes(maskFile.type)) {
+		return json(
+			{
+				error: `Unsupported mask format: ${maskFile.type}. Please use PNG format.`,
+			},
+			400
+		);
+	}
+
 	// Replace {{color}} placeholder with the selected color hex value
 	const prompt = wallPrompt.replace("{{color}}", colorHex);
 
@@ -131,6 +62,7 @@ export async function action({ request }: ActionFunctionArgs) {
 		colorHex,
 		prompt,
 		fileName: file?.name,
+		maskFileName: maskFile?.name,
 	});
 
 	if (!file) {
@@ -145,7 +77,7 @@ export async function action({ request }: ActionFunctionArgs) {
 		await storeImage(imageId, imageBase64, { status: "pending" });
 
 		// Process the image and prompt directly with the extracted data
-		processAndStoreImage(imageId, prompt, file);
+		processAndStoreImage(imageId, prompt, file, maskFile);
 
 		console.log("Image stored in SQLite with ID:", imageId);
 		return json({ response: { imageId, imageBase64 } });
@@ -158,14 +90,27 @@ export async function action({ request }: ActionFunctionArgs) {
 const processAndStoreImage = async (
 	imageId: string,
 	prompt: string,
-	file: File
+	file: File,
+	maskFile: File | null
 ) => {
 	const { storeImage } = await import("../utils/sqlite.server");
 	const { processImageAndPrompt } = await import("./api/chatgpt");
 
-	const response = await processImageAndPrompt(prompt, file);
+	const response = await processImageAndPrompt(prompt, file, maskFile);
 
 	if (!response) return;
+
+	// Check if there was an error from the API
+	if (response.error) {
+		// Update the status to error with the error message
+		await storeImage(imageId, "", {
+			fileName: file.name,
+			timestamp: new Date().toISOString(),
+			status: "error",
+			errorMessage: response.error,
+		});
+		return;
+	}
 
 	// Extract the base64 data from the data URL
 	const base64Data = response.image.split(";base64,").pop() as string;
@@ -237,11 +182,16 @@ export default function ImageUpload() {
 	const navigation = useNavigation();
 	const isSubmitting = navigation.state === "submitting";
 	const [previewImage, setPreviewImage] = useState<string | null>(null);
+	const [previewMaskImage, setPreviewMaskImage] = useState<string | null>(null);
 	const [sentImage, setSentImage] = useState<string | null>(null);
 	const [selectedFile, setSelectedFile] = useState<File | null>(null);
+	const [selectedMaskFile, setSelectedMaskFile] = useState<File | null>(null);
 	const [processingStatus, setProcessingStatus] = useState<string | null>(null);
 	const [imageReady, setImageReady] = useState(false);
 	const [selectedColor, setSelectedColor] = useState(paintColors[0]);
+
+	// State for API error messages
+	const [apiError, setApiError] = useState<string | null>(null);
 
 	// Poll for image status updates
 	useEffect(() => {
@@ -263,8 +213,13 @@ export default function ImageUpload() {
 				if (isMounted) {
 					setProcessingStatus(data.status);
 
+					// Handle error status
+					if (data.status === "error") {
+						setApiError(data.errorMessage || "An error occurred while processing the image");
+						clearInterval(intervalId);
+					}
 					// If processing is complete, stop polling
-					if (data.status === "completed") {
+					else if (data.status === "completed") {
 						setImageReady(true);
 						clearInterval(intervalId);
 					}
@@ -275,6 +230,9 @@ export default function ImageUpload() {
 		};
 
 		if (actionData?.response?.imageId) {
+			// Reset error state when starting a new request
+			setApiError(null);
+			
 			// Initial check
 			checkImageStatus();
 
@@ -312,6 +270,32 @@ export default function ImageUpload() {
 		}
 	};
 
+	// Handle mask file input change
+	const handleMaskFileChange = async (
+		e: React.ChangeEvent<HTMLInputElement>
+	) => {
+		const file = e.target.files?.[0];
+		if (file) {
+			try {
+				// Convert to PNG immediately
+				const pngFile = await convertToPng(file);
+
+				// Create a preview URL from the PNG file
+				const previewUrl = URL.createObjectURL(pngFile);
+				setPreviewMaskImage(previewUrl);
+				setSelectedMaskFile(pngFile);
+			} catch (error) {
+				console.error("Error converting mask to PNG:", error);
+				// Fallback to original file if conversion fails
+				setPreviewMaskImage(URL.createObjectURL(file));
+				setSelectedMaskFile(file);
+			}
+		} else {
+			setPreviewMaskImage(null);
+			setSelectedMaskFile(null);
+		}
+	};
+
 	return (
 		<div className="container mx-auto p-8">
 			<h1 className="text-3xl font-bold mb-8">Paint Visualizer</h1>
@@ -335,6 +319,21 @@ export default function ImageUpload() {
 
 						// Set the file input's files to our PNG file
 						fileInput.files = dataTransfer.files;
+					}
+
+					// Do the same for mask file if it exists
+					if (selectedMaskFile) {
+						// Find the mask file input element
+						const maskFileInput = e.currentTarget.querySelector(
+							"#mask"
+						) as HTMLInputElement;
+
+						// Create a DataTransfer to set the files
+						const dataTransfer = new DataTransfer();
+						dataTransfer.items.add(selectedMaskFile);
+
+						// Set the file input's files to our PNG file
+						maskFileInput.files = dataTransfer.files;
 					}
 				}}
 			>
@@ -384,34 +383,57 @@ export default function ImageUpload() {
 						required
 						onChange={handleFileChange}
 					/>
+				</div>
+
+				<div>
+					<label
+						htmlFor="mask"
+						className="block text-sm font-medium text-gray-700"
+					>
+						Upload Mask (Optional)
+					</label>
+					<p className="text-xs text-gray-500 mb-1">
+						A black and white image where white areas indicate regions to be
+						modified
+					</p>
+					<input
+						type="file"
+						id="mask"
+						name="mask"
+						accept="image/*"
+						className="mt-1 block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100"
+						onChange={handleMaskFileChange}
+					/>
 					<div className="flex gap-4">
 						{previewImage && (
-							<div className="mt-4">
-								<p className="text-sm text-gray-500 mb-2">uploaded:</p>
-								<div className="relative w-32 h-32 overflow-hidden rounded-md border border-gray-300">
-									<img
-										src={previewImage}
-										alt="Preview"
-										className="object-cover w-full h-full"
-										onLoad={() => {
-											// Free memory when the image is loaded
-											URL.revokeObjectURL(previewImage);
-										}}
-									/>
-								</div>
-							</div>
+							<PreviewThumbnail
+								src={previewImage}
+								alt="Preview"
+								title="uploaded image:"
+								onLoad={() => {
+									// Free memory when the image is loaded
+									URL.revokeObjectURL(previewImage);
+								}}
+							/>
+						)}
+						{previewMaskImage && (
+							<PreviewThumbnail
+								src={previewMaskImage}
+								alt="Mask Preview"
+								title="uploaded mask:"
+								showCheckerboard={true}
+								onLoad={() => {
+									// Free memory when the image is loaded
+									URL.revokeObjectURL(previewMaskImage);
+								}}
+							/>
 						)}
 						{actionData?.response?.imageBase64 && (
-							<div className="mt-4">
-								<p className="text-sm text-gray-500 mb-2">processed:</p>
-								<div className="relative w-32 h-32 overflow-hidden rounded-md border border-gray-300">
-									<img
-										className="inset-0 absolute"
-										src={`data:image/png;base64,${actionData.response.imageBase64}`}
-										alt="Sent"
-									/>
-								</div>
-							</div>
+							<PreviewThumbnail
+								src={`data:image/png;base64,${actionData.response.imageBase64}`}
+								alt="Sent"
+								title="processed:"
+							/>
 						)}
 					</div>
 				</div>
@@ -492,6 +514,18 @@ export default function ImageUpload() {
 											alt2="Processed Image"
 											className="w-full h-full"
 										/>
+									</>
+								) : processingStatus === "error" ? (
+									<>
+										<div className="flex items-center justify-center h-64 bg-red-50">
+											<div className="text-center p-4">
+												<svg className="mx-auto h-12 w-12 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+													<path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+												</svg>
+												<h3 className="mt-2 text-sm font-medium text-red-800">Processing Error</h3>
+												<p className="mt-1 text-sm text-red-700">{apiError || "An error occurred while processing your image"}</p>
+											</div>
+										</div>
 									</>
 								) : (
 									<>

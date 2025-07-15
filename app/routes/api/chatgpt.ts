@@ -76,7 +76,8 @@ async function generateImageWithGptResponse(
 async function generateImageWithGptImage(
 	apiKey: string,
 	prompt: string,
-	file: File
+	file: File,
+	maskFile: File | null
 ): Promise<string> {
 	console.log("Generating image with OpenAI gpt-image-1 API");
 	console.log("Using prompt:", prompt);
@@ -88,14 +89,32 @@ async function generateImageWithGptImage(
 
 	try {
 		// Now use gpt-image-1 to generate the image based on the detailed description
-		const imageResponse = await openai.images.edit({
-			model: "gpt-image-1",
-			prompt: prompt,
-			image: file,
-			n: 1,
-			size: "1024x1024",
-			quality: "low",
-		});
+		let imageResponse;
+		if (maskFile) {
+			console.log("Using mask file:", maskFile.name);
+			// If mask is provided, use it in the API call
+			imageResponse = await openai.images.edit({
+				// model: "dall-e-2",
+				model: "gpt-image-1",
+				prompt: prompt,
+				image: file,
+				mask: maskFile,
+				n: 1,
+				size: "1024x1024",
+				quality: "medium",
+			});
+		} else {
+			console.log("No mask file provided");
+			// If no mask is provided, use the standard edit API
+			imageResponse = await openai.images.edit({
+				model: "gpt-image-1",
+				prompt: prompt,
+				image: file,
+				n: 1,
+				size: "1024x1024",
+				quality: "high",
+			});
+		}
 		console.log("Image response:", imageResponse);
 
 		// Extract the base64 image from the response
@@ -111,6 +130,7 @@ async function generateImageWithGptImage(
 		return generatedImageBase64;
 	} catch (error: any) {
 		console.error("API error:", error);
+		// Instead of throwing, return the error message
 		throw new Error(`API error: ${error.message || JSON.stringify(error)}`);
 	}
 }
@@ -121,10 +141,12 @@ async function generateImageWithGptImage(
  */
 export async function processImageAndPrompt(
 	prompt: string,
-	file: File
+	file: File,
+	maskFile: File | null = null
 ): Promise<{
 	image: string;
 	imageId?: string;
+	error?: string;
 } | null> {
 	console.log("Calling OpenAI API with image and prompt");
 
@@ -140,14 +162,19 @@ export async function processImageAndPrompt(
 		const generatedImageBase64 = await generateImageWithGptImage(
 			apiKey,
 			prompt,
-			file
+			file,
+			maskFile
 		);
 
 		return {
 			image: `data:image/png;base64,${generatedImageBase64}`,
 		};
-	} catch (error) {
+	} catch (error: any) {
 		console.error("Error calling OpenAI API:", error);
-		return null;
+		// Return the error message instead of null
+		return {
+			image: "",
+			error: error.message || "An error occurred while processing the image",
+		};
 	}
 }
