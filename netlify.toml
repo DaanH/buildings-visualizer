@@ -1,0 +1,14 @@
+[build]
+  command = "npm run build"
+  publish = "build/client"
+  functions = ".netlify/v1/functions"
+
+[dev]
+  command = "npm run dev"
+  targetPort = 3000
+
+# Redirect all routes to the index.html for client-side routing
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
